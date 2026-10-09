@@ -1,5 +1,7 @@
-streamlit
-pandas
-numpy
-scikit-learn
-joblib
+streamlit==1.65.0
+pandas==3.0.6
+numpy==2.4.6
+# yc2_classifier.pkl was saved with scikit-learn 1.6.1.
+scikit-learn==1.6.1
+scipy==1.17.1
+joblib==1.6.0
