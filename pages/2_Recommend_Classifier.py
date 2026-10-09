@@ -6,33 +6,52 @@ import pandas as pd
 import streamlit as st
 
 
+# =========================================================
+# CONFIG
+# =========================================================
+
 st.set_page_config(
     page_title="Recommend Classifier",
     page_icon="🤖",
     layout="wide",
 )
 
-
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "models" / "yc2_classifier.pkl"
+
+MODEL_PATH = (
+    BASE_DIR
+    / "models"
+    / "yc2_classifier.pkl"
+)
+
+REVIEWS_PATH = (
+    BASE_DIR
+    / "data"
+    / "Reviews_clean.csv"
+)
 
 
 # =========================================================
-# LOAD MODEL
+# LOAD MODEL + DATA
 # =========================================================
 
 @st.cache_resource
-def load_artifact(model_path: Path):
-    # Include the model path in the cache key to isolate page artifacts.
-    return joblib.load(model_path)
+def load_artifact():
+    return joblib.load(MODEL_PATH)
+
+
+@st.cache_data
+def load_reviews():
+    return pd.read_csv(REVIEWS_PATH)
 
 
 try:
-    artifact = load_artifact(MODEL_PATH)
+    artifact = load_artifact()
+    reviews = load_reviews()
 
 except Exception as e:
     st.error(
-        f"Không thể load yc2_classifier.pkl: {e}"
+        f"Không thể load model hoặc dữ liệu: {e}"
     )
     st.stop()
 
@@ -47,18 +66,23 @@ NUMERIC_COLUMNS = artifact["numeric_columns"]
 
 # =========================================================
 # TEXT PREPROCESSING
-# Giống logic trong notebook YC2
+# Giữ cùng logic với notebook YC2
 # =========================================================
 
 def normalize_text(text):
+    if pd.isna(text):
+        return ""
+
     text = str(text).lower()
 
+    # Xóa URL
     text = re.sub(
         r"https?://\S+|www\.\S+",
         " ",
         text,
     )
 
+    # Chuẩn hóa khoảng trắng
     text = re.sub(
         r"\s+",
         " ",
@@ -66,6 +90,22 @@ def normalize_text(text):
     ).strip()
 
     return text
+
+
+def build_review_text(
+    title,
+    liked,
+    improvement,
+):
+    text = " ".join(
+        [
+            str(title or ""),
+            str(liked or ""),
+            str(improvement or ""),
+        ]
+    )
+
+    return normalize_text(text)
 
 
 def prepare_input(
@@ -79,17 +119,14 @@ def prepare_input(
     culture,
     office,
 ):
-    # Notebook ghép 3 text field thành review_text
-    review_text = " ".join(
-        [
-            str(title),
-            str(liked),
-            str(improvement),
-        ]
-    )
+    """
+    Tạo đúng input mà pipeline YC2 đã dùng khi train.
+    """
 
-    review_text = normalize_text(
-        review_text
+    review_text = build_review_text(
+        title,
+        liked,
+        improvement,
     )
 
     return pd.DataFrame(
@@ -108,16 +145,255 @@ def prepare_input(
 
 
 # =========================================================
-# UI
+# PREDICTION FUNCTION
 # =========================================================
 
-st.title("🤖 Recommend / Not Recommend")
+def predict_review(input_df):
+
+    prediction = model.predict(
+        input_df
+    )[0]
+
+    # Có thể model trả int hoặc numpy integer
+    try:
+        prediction_int = int(prediction)
+        label = label_map[prediction_int]
+
+    except Exception:
+        label = str(prediction)
+
+    score = None
+    score_type = None
+
+    # Một số classifier có predict_proba
+    if hasattr(
+        model,
+        "predict_proba",
+    ):
+
+        probabilities = model.predict_proba(
+            input_df
+        )[0]
+
+        # Giả sử class 1 = Yes
+        score = float(
+            probabilities[-1]
+        )
+
+        score_type = (
+            "Probability Recommend"
+        )
+
+    # Linear SVM thường dùng decision_function
+    elif hasattr(
+        model,
+        "decision_function",
+    ):
+
+        decision_score = (
+            model.decision_function(
+                input_df
+            )
+        )
+
+        if hasattr(
+            decision_score,
+            "__len__",
+        ):
+            decision_score = (
+                decision_score[0]
+            )
+
+        score = float(
+            decision_score
+        )
+
+        score_type = (
+            "Decision score"
+        )
+
+    return label, score, score_type
+
+
+# =========================================================
+# RESULT COMPONENT
+# =========================================================
+
+def show_prediction(
+    input_df,
+    actual_label=None,
+):
+    try:
+        label, score, score_type = (
+            predict_review(
+                input_df
+            )
+        )
+
+    except Exception as e:
+        st.error(
+            f"Lỗi khi dự đoán: {e}"
+        )
+        return
+
+    st.divider()
+    st.subheader("Kết quả dự đoán")
+
+    # ---------------------------------------------
+    # PREDICTED LABEL
+    # ---------------------------------------------
+
+    if str(label).lower() == "yes":
+
+        st.success(
+            "✅ RECOMMEND"
+        )
+
+        st.write(
+            """
+            Model dự đoán người viết review
+            **có xu hướng giới thiệu công ty này**.
+            """
+        )
+
+    else:
+
+        st.error(
+            "❌ NOT RECOMMEND"
+        )
+
+        st.write(
+            """
+            Model dự đoán người viết review
+            **không có xu hướng giới thiệu công ty này**.
+            """
+        )
+
+    # ---------------------------------------------
+    # METRICS
+    # ---------------------------------------------
+
+    if actual_label is None:
+
+        c1, c2 = st.columns(2)
+
+    else:
+
+        c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.metric(
+            "Model Prediction",
+            label,
+        )
+
+    with c2:
+
+        if score is not None:
+
+            if (
+                score_type
+                == "Probability Recommend"
+            ):
+
+                st.metric(
+                    score_type,
+                    f"{score * 100:.2f}%",
+                )
+
+            else:
+
+                st.metric(
+                    score_type,
+                    f"{score:.4f}",
+                )
+
+        else:
+            st.metric(
+                "Model Score",
+                "N/A",
+            )
+
+    # ---------------------------------------------
+    # ACTUAL LABEL
+    # Chỉ có khi dùng review có sẵn
+    # ---------------------------------------------
+
+    if actual_label is not None:
+
+        actual_label = (
+            str(actual_label)
+            .strip()
+        )
+
+        with c3:
+
+            st.metric(
+                "Actual Label",
+                actual_label,
+            )
+
+        is_correct = (
+            str(label).lower()
+            == actual_label.lower()
+        )
+
+        if is_correct:
+
+            st.success(
+                "🎯 Prediction trùng với nhãn thực tế."
+            )
+
+        else:
+
+            st.warning(
+                "⚠️ Prediction không trùng với nhãn thực tế."
+            )
+
+    # ---------------------------------------------
+    # SCORE EXPLANATION
+    # ---------------------------------------------
+
+    if score_type == "Decision score":
+
+        st.caption(
+            """
+            **Decision score** không phải xác suất.
+
+            - Score > 0: model nghiêng về Recommend
+            - Score < 0: model nghiêng về Not Recommend
+            - Score càng xa 0: model càng nghiêng mạnh về một phía
+            """
+        )
+
+    # ---------------------------------------------
+    # INPUT SENT TO MODEL
+    # ---------------------------------------------
+
+    with st.expander(
+        "Xem dữ liệu thực sự đưa vào model"
+    ):
+
+        st.dataframe(
+            input_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+# =========================================================
+# PAGE HEADER
+# =========================================================
+
+st.title(
+    "🤖 Recommend / Not Recommend"
+)
 
 st.write(
     """
-    Nhập nội dung review và các mức đánh giá.
-    Mô hình sẽ dự đoán người viết review có xu hướng
-    **Recommend** công ty hay không.
+    Dự đoán một review có xu hướng
+    **Recommend** công ty hay **Not Recommend**
+    dựa trên nội dung review và các mức đánh giá.
     """
 )
 
@@ -129,306 +405,422 @@ st.divider()
 
 
 # =========================================================
-# TEXT INPUT
+# MODE
 # =========================================================
 
-st.subheader("1. Nội dung review")
-
-title = st.text_input(
-    "Review title",
-    placeholder="Ví dụ: Môi trường làm việc tốt",
-)
-
-liked = st.text_area(
-    "What I liked",
-    placeholder=(
-        "Ví dụ: Đồng nghiệp thân thiện, "
-        "môi trường học hỏi tốt..."
-    ),
-    height=130,
-)
-
-improvement = st.text_area(
-    "Suggestions for improvement",
-    placeholder=(
-        "Ví dụ: Công ty nên cải thiện "
-        "chính sách lương và phúc lợi..."
-    ),
-    height=130,
+mode = st.radio(
+    "Nguồn review",
+    [
+        "📚 Chọn review có sẵn",
+        "✍️ Nhập review mới",
+    ],
+    horizontal=True,
 )
 
 
 # =========================================================
-# RATING INPUT
+# MODE 1
+# EXISTING REVIEW
 # =========================================================
 
-st.subheader("2. Điểm đánh giá")
+if mode == "📚 Chọn review có sẵn":
 
-col1, col2, col3 = st.columns(3)
-
-with col1:
-
-    rating = st.slider(
-        "Overall Rating",
-        min_value=1,
-        max_value=5,
-        value=4,
+    st.subheader(
+        "Chọn một review từ dataset"
     )
 
-    salary = st.slider(
-        "Salary & benefits",
-        min_value=1,
-        max_value=5,
-        value=4,
+    company_names = sorted(
+        reviews["Company Name"]
+        .dropna()
+        .astype(str)
+        .unique()
     )
 
-
-with col2:
-
-    training = st.slider(
-        "Training & learning",
-        min_value=1,
-        max_value=5,
-        value=4,
+    selected_company = st.selectbox(
+        "Công ty",
+        company_names,
     )
 
-    management = st.slider(
-        "Management cares about me",
-        min_value=1,
-        max_value=5,
-        value=4,
-    )
-
-
-with col3:
-
-    culture = st.slider(
-        "Culture & fun",
-        min_value=1,
-        max_value=5,
-        value=4,
-    )
-
-    office = st.slider(
-        "Office & workspace",
-        min_value=1,
-        max_value=5,
-        value=4,
-    )
-
-
-st.divider()
-
-
-# =========================================================
-# PREDICTION
-# =========================================================
-
-if st.button(
-    "🤖 Dự đoán",
-    type="primary",
-    use_container_width=True,
-):
-
-    # Không bắt buộc cả 3 text đều có,
-    # nhưng ít nhất nên có một nội dung.
-    if not any(
-        [
-            title.strip(),
-            liked.strip(),
-            improvement.strip(),
+    company_reviews = (
+        reviews[
+            reviews["Company Name"]
+            .astype(str)
+            .eq(selected_company)
         ]
-    ):
+        .copy()
+    )
 
+    st.caption(
+        f"Có {len(company_reviews):,} review "
+        f"của {selected_company} trong dataset."
+    )
+
+    if company_reviews.empty:
         st.warning(
-            "Hãy nhập ít nhất một nội dung review."
+            "Không có review cho công ty này."
         )
-
         st.stop()
 
+    # ---------------------------------------------
+    # REVIEW SELECTBOX
+    # Dùng index thật của DataFrame
+    # ---------------------------------------------
 
-    input_df = prepare_input(
-        title=title,
-        liked=liked,
-        improvement=improvement,
-        rating=rating,
-        salary=salary,
-        training=training,
-        management=management,
-        culture=culture,
-        office=office,
+    review_indices = (
+        company_reviews.index.tolist()
+    )
+
+    def review_label(idx):
+
+        row = reviews.loc[idx]
+
+        date = str(
+            row.get(
+                "Cmt_day",
+                ""
+            )
+        )
+
+        title = str(
+            row.get(
+                "Title",
+                "Không có tiêu đề"
+            )
+        )
+
+        actual = str(
+            row.get(
+                "Recommend?",
+                ""
+            )
+        )
+
+        # Không để dropdown quá dài
+        if len(title) > 80:
+            title = (
+                title[:77]
+                + "..."
+            )
+
+        return (
+            f"{date} — "
+            f"{title} "
+            f"[Actual: {actual}]"
+        )
+
+    selected_review_index = (
+        st.selectbox(
+            "Review",
+            review_indices,
+            format_func=review_label,
+        )
+    )
+
+    row = reviews.loc[
+        selected_review_index
+    ]
+
+
+    # =====================================================
+    # REVIEW CONTENT
+    # =====================================================
+
+    st.divider()
+
+    st.subheader(
+        "Nội dung review"
+    )
+
+    title = (
+        ""
+        if pd.isna(row["Title"])
+        else str(row["Title"])
+    )
+
+    liked = (
+        ""
+        if pd.isna(
+            row["What I liked"]
+        )
+        else str(
+            row["What I liked"]
+        )
+    )
+
+    improvement = (
+        ""
+        if pd.isna(
+            row[
+                "Suggestions for improvement"
+            ]
+        )
+        else str(
+            row[
+                "Suggestions for improvement"
+            ]
+        )
+    )
+
+    st.text_input(
+        "Review title",
+        value=title,
+        disabled=True,
+    )
+
+    st.text_area(
+        "What I liked",
+        value=liked,
+        height=140,
+        disabled=True,
+    )
+
+    st.text_area(
+        "Suggestions for improvement",
+        value=improvement,
+        height=140,
+        disabled=True,
     )
 
 
-    try:
+    # =====================================================
+    # RATINGS
+    # =====================================================
 
-        prediction = model.predict(
-            input_df
-        )[0]
+    st.subheader(
+        "Điểm đánh giá"
+    )
 
-        prediction = int(
-            prediction
-        )
+    rating_values = {
+        "Rating": row["Rating"],
+        "Salary & benefits":
+            row["Salary & benefits"],
+        "Training & learning":
+            row["Training & learning"],
+        "Management cares about me":
+            row[
+                "Management cares about me"
+            ],
+        "Culture & fun":
+            row["Culture & fun"],
+        "Office & workspace":
+            row["Office & workspace"],
+    }
 
-        label = label_map[
-            prediction
-        ]
+    cols = st.columns(6)
 
+    for i, (
+        column,
+        value
+    ) in enumerate(
+        rating_values.items()
+    ):
 
-        # ==============================================
-        # SCORE
-        # ==============================================
+        with cols[i]:
 
-        score = None
-        score_type = None
-
-        if hasattr(
-            model,
-            "predict_proba",
-        ):
-
-            probability = (
-                model
-                .predict_proba(
-                    input_df
-                )[0][1]
-            )
-
-            score = float(
-                probability
-            )
-
-            score_type = (
-                "Probability Recommend"
-            )
-
-
-        elif hasattr(
-            model,
-            "decision_function",
-        ):
-
-            decision_score = (
-                model
-                .decision_function(
-                    input_df
-                )
-            )
-
-            if hasattr(
-                decision_score,
-                "__len__",
-            ):
-                decision_score = (
-                    decision_score[0]
+            try:
+                value_display = (
+                    f"{float(value):.0f} / 5"
                 )
 
-            score = float(
-                decision_score
-            )
-
-            score_type = (
-                "Decision score"
-            )
-
-
-        # ==============================================
-        # OUTPUT
-        # ==============================================
-
-        if label == "Yes":
-
-            st.success(
-                "✅ RECOMMEND"
-            )
-
-            st.write(
-                """
-                Mô hình dự đoán review này có xu hướng
-                **giới thiệu công ty cho người khác**.
-                """
-            )
-
-        else:
-
-            st.error(
-                "❌ NOT RECOMMEND"
-            )
-
-            st.write(
-                """
-                Mô hình dự đoán review này có xu hướng
-                **không giới thiệu công ty**.
-                """
-            )
-
-
-        result_col1, result_col2 = (
-            st.columns(2)
-        )
-
-
-        with result_col1:
+            except Exception:
+                value_display = "N/A"
 
             st.metric(
-                "Prediction",
-                label,
+                column,
+                value_display,
             )
 
 
-        with result_col2:
+    # =====================================================
+    # PREDICT EXISTING REVIEW
+    # =====================================================
 
-            if score is not None:
+    if st.button(
+        "🤖 Dự đoán review này",
+        type="primary",
+        use_container_width=True,
+    ):
 
-                if score_type == (
-                    "Probability Recommend"
-                ):
+        input_df = prepare_input(
+            title=title,
+            liked=liked,
+            improvement=improvement,
+            rating=row["Rating"],
+            salary=row[
+                "Salary & benefits"
+            ],
+            training=row[
+                "Training & learning"
+            ],
+            management=row[
+                "Management cares about me"
+            ],
+            culture=row[
+                "Culture & fun"
+            ],
+            office=row[
+                "Office & workspace"
+            ],
+        )
 
-                    st.metric(
-                        score_type,
-                        f"{score * 100:.2f}%",
-                    )
-
-                else:
-
-                    st.metric(
-                        score_type,
-                        f"{score:.4f}",
-                    )
-
-
-        if score_type == "Decision score":
-
-            st.caption(
-                """
-                Decision score > 0:
-                model nghiêng về Recommend.
-
-                Decision score < 0:
-                model nghiêng về Not Recommend.
-
-                Đây không phải xác suất.
-                """
-            )
+        show_prediction(
+            input_df,
+            actual_label=row[
+                "Recommend?"
+            ],
+        )
 
 
-        # ==============================================
-        # SHOW INPUT
-        # ==============================================
+# =========================================================
+# MODE 2
+# NEW REVIEW
+# =========================================================
 
-        with st.expander(
-            "Xem dữ liệu đưa vào model"
+else:
+
+    st.subheader(
+        "Nhập review mới"
+    )
+
+    st.info(
+        """
+        Chế độ này mô phỏng trường hợp
+        một người dùng nhập review mới
+        chưa tồn tại trong dataset.
+        """
+    )
+
+    # ---------------------------------------------
+    # TEXT
+    # ---------------------------------------------
+
+    title = st.text_input(
+        "Review title",
+        placeholder=(
+            "Ví dụ: "
+            "Môi trường làm việc tốt"
+        ),
+    )
+
+    liked = st.text_area(
+        "What I liked",
+        placeholder=(
+            "Ví dụ: Đồng nghiệp thân thiện, "
+            "môi trường học hỏi tốt..."
+        ),
+        height=130,
+    )
+
+    improvement = st.text_area(
+        "Suggestions for improvement",
+        placeholder=(
+            "Ví dụ: Công ty nên cải thiện "
+            "chính sách lương..."
+        ),
+        height=130,
+    )
+
+
+    # ---------------------------------------------
+    # RATINGS
+    # ---------------------------------------------
+
+    st.subheader(
+        "Điểm đánh giá"
+    )
+
+    col1, col2, col3 = (
+        st.columns(3)
+    )
+
+    with col1:
+
+        rating = st.slider(
+            "Overall Rating",
+            1,
+            5,
+            4,
+        )
+
+        salary = st.slider(
+            "Salary & benefits",
+            1,
+            5,
+            4,
+        )
+
+    with col2:
+
+        training = st.slider(
+            "Training & learning",
+            1,
+            5,
+            4,
+        )
+
+        management = st.slider(
+            "Management cares about me",
+            1,
+            5,
+            4,
+        )
+
+    with col3:
+
+        culture = st.slider(
+            "Culture & fun",
+            1,
+            5,
+            4,
+        )
+
+        office = st.slider(
+            "Office & workspace",
+            1,
+            5,
+            4,
+        )
+
+
+    # ---------------------------------------------
+    # PREDICT NEW REVIEW
+    # ---------------------------------------------
+
+    if st.button(
+        "🤖 Dự đoán",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        if not any(
+            [
+                title.strip(),
+                liked.strip(),
+                improvement.strip(),
+            ]
         ):
 
-            st.dataframe(
-                input_df,
-                use_container_width=True,
-                hide_index=True,
+            st.warning(
+                """
+                Hãy nhập ít nhất một
+                nội dung review.
+                """
             )
 
+            st.stop()
 
-    except Exception as e:
+        input_df = prepare_input(
+            title=title,
+            liked=liked,
+            improvement=improvement,
+            rating=rating,
+            salary=salary,
+            training=training,
+            management=management,
+            culture=culture,
+            office=office,
+        )
 
-        st.error(
-            f"Lỗi khi dự đoán: {e}"
+        show_prediction(
+            input_df
         )
