@@ -491,5 +491,5 @@ if (
     st.link_button(
         "🔗 Xem công ty trên ITViec",
         str(href),
-        use_container_width=True,
+        width="stretch",
     )

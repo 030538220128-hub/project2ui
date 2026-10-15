@@ -45,18 +45,28 @@ with col1:
     st.subheader("🔎 Công ty tương tự")
     st.write(
         """
-        Chọn một công ty và tìm các công ty
+        Chọn một công ty hoặc nhập từ khóa để tìm các công ty
         có nội dung tương đồng nhất.
         """
+    )
+    st.page_link(
+        "pages/1_Company_Similarity.py",
+        label="Mở Company Similarity →",
+        icon="🔎",
     )
 
 with col2:
     st.subheader("🤖 Recommend / Not")
     st.write(
         """
-        Nhập nội dung review và các mức rating
+        Nhập nội dung review, chọn review có sẵn hoặc upload CSV
         để dự đoán người dùng có recommend công ty hay không.
         """
+    )
+    st.page_link(
+        "pages/2_Recommend_Classifier.py",
+        label="Mở Recommend Classifier →",
+        icon="🤖",
     )
 
 with col3:
@@ -66,6 +76,11 @@ with col3:
         Xem thông tin và thống kê review
         của từng công ty.
         """
+    )
+    st.page_link(
+        "pages/3_Company_Overview.py",
+        label="Mở Company Overview →",
+        icon="📊",
     )
 
 st.divider()

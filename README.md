@@ -1,13 +1,19 @@
-# ITViec Company Intelligence
+# ITViec Company Intelligence (Project 2)
 
-Ứng dụng Streamlit tìm công ty tương tự, dự đoán Recommend và xem tổng quan công ty.
+Ứng dụng Streamlit gợi ý công ty IT tương tự (Content-Based Filtering), dự đoán khả năng **Recommend** từ đánh giá nhân viên và phân tích tổng quan thị trường tuyển dụng IT trên ITViec.
+
+## Giới thiệu tính năng
+
+1. **Company Similarity (`1_Company_Similarity.py`)**: Gợi ý Top-N công ty tương tự dựa trên 4 phương pháp (**Method A**: Content TF-IDF Cosine, **Method B**: Review Sentiment & Text Similarity, **Method C**: Hybrid Content + Review, **Method D**: LSA `TruncatedSVD + Cosine Similarity`). Hỗ trợ tìm kiếm công ty theo **từ khóa / kỹ năng tự do** (Free-text Query Search) và hiển thị thẻ chi tiết công ty gốc.
+2. **Recommend Classifier (`2_Recommend_Classifier.py`)**: Dự đoán xác suất nhân viên khuyên làm việc tại công ty (`Recommend` vs `Not Recommend`) bằng mô hình **Logistic Regression** kết hợp TF-IDF văn bản đa ngôn ngữ Việt-Anh và các chỉ số đánh giá. Hỗ trợ biểu đồ 6 tiêu chí đánh giá chi tiết và dự đoán hàng loạt qua file CSV.
+3. **Company Overview (`3_Company_Overview.py`)**: Thống kê KPIs, phân bố điểm đánh giá và tra cứu hồ sơ 478 công ty IT trên ITViec.
 
 ## Chạy local
 
-Sử dụng Python 3.11 (phiên bản đã kiểm tra với các mô hình hiện tại):
+Sử dụng Python 3.11 hoặc Python 3.12 (phiên bản đã kiểm tra với các mô hình hiện tại):
 
 ```bash
-python3.11 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m streamlit run app.py

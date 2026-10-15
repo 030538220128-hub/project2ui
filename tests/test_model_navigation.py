@@ -1,4 +1,4 @@
-"""Regression coverage for model caches shared by Streamlit pages."""
+"""Regression coverage for model caches, LSA similarity, free-text search, and Streamlit pages."""
 
 from pathlib import Path
 import unittest
@@ -51,6 +51,22 @@ class ModelNavigationTests(unittest.TestCase):
 
     def test_overview_then_classifier_then_similarity(self):
         self.check_navigation([OVERVIEW, CLASSIFIER, SIMILARITY])
+
+    def test_similarity_lsa_and_keyword_search(self):
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+        app.switch_page(SIMILARITY).run()
+
+        # Test Method D (LSA)
+        app.radio[1].set_value("D").run()
+        app.button[0].click().run()
+        self.assertEqual([e.message for e in app.exception], [])
+        self.assertEqual(len(app.metric), 5)
+
+        # Test free-text keyword search
+        app.radio[0].set_value("🔎 Tìm kiếm theo từ khóa / mô tả tự do").run()
+        app.button[0].click().run()
+        self.assertEqual([e.message for e in app.exception], [])
+        self.assertEqual(len(app.metric), 5)
 
 
 if __name__ == "__main__":
